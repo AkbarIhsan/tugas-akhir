@@ -11,13 +11,12 @@ class TransferStock extends Model
         'id_user',
         'id_unit_request',
         'id_unit_gives',
-        'product_price_gives',
         'qty_product_request',
-        'total_price',
         'id_user_2',
+        'status',
     ];
 
-    public function users() {
+    public function user() {
         return $this->belongsTo(User::class, 'id_user',);
     }
 
@@ -25,15 +24,15 @@ class TransferStock extends Model
         return $this->belongsTo(User::class, 'id_user_2');
     }
 
-    public function unit() {
+    public function unit_request() {
         return $this->belongsTo(Unit::class, 'id_unit_request',);
     }
 
-    public function units(){
+    public function unit_gives(){
         return $this->belongsTo(Unit::class, 'id_unit_gives');
     }
 
-    public function request(){
-        return $this->hasMany(RequestModel::class, 'id_transfer_stock');
-    }
+    // public function request(){
+    //     return $this->hasMany(RequestModel::class, 'id_transfer_stock');
+    // }
 }

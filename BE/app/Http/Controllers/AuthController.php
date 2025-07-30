@@ -34,17 +34,19 @@ class AuthController extends Controller
         return response()->json(['token' => $token, 'user' => $user]);
     }
 
-    public function login(Request $request) {
-        $user = User::where('username', $request->username)->first();
+public function login(Request $request) {
+    $user = User::with('role') // Tambahkan eager loading
+                ->where('username', $request->username)
+                ->first();
 
-        if (! $user || ! Hash::check($request->password, $user->password)) {
-            return response()->json(['message' => 'Invalid credentials'], 401);
-        }
-
-        $token = $user->createToken('api-token')->plainTextToken;
-
-        return response()->json(['token' => $token, 'user' => $user]);
+    if (! $user || ! Hash::check($request->password, $user->password)) {
+        return response()->json(['message' => 'Invalid credentials'], 401);
     }
+
+    $token = $user->createToken('api-token')->plainTextToken;
+
+    return response()->json(['token' => $token, 'user' => $user]);
+}
 
     public function logout(Request $request){
         $request->user()->tokens()->delete();

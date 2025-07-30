@@ -3,7 +3,7 @@
 namespace App\Http\Controllers;
 
 use App\Models\TransferStock;
-use App\Models\RequestModel;
+// use App\Models\RequestModel;
 use App\Models\Unit;
 use App\Models\User;
 use Illuminate\Http\Request;
@@ -13,10 +13,43 @@ class TransferStockController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index()
-    {
-        //
-    }
+public function index()
+{
+    $user = auth()->user();
+
+    // Ambil semua transfer stock yang melibatkan user ini
+    $allTransfers = TransferStock::with([
+        'user:id,username,id_branch',
+        'user.branch:id,branch_name',
+        'user2:id,username,id_branch',
+        'user2.branch:id,branch_name',
+        'unit_request:id,unit_name,id_product_type',
+        'unit_request.productType:id,product_name_type',
+        'unit_gives:id,unit_name,id_product_type',
+        'unit_gives.productType:id,product_name_type',
+    ])
+    ->where(function ($query) use ($user) {
+        $query->where('id_user', $user->id)
+        ->orWhere('id_user_2', $user->id);
+    })
+    ->orderByDesc('created_at')
+    ->get();
+
+    // Pisahkan berdasarkan jenis keterlibatan user
+    $myRequests = $allTransfers->where('id_user', $user->id)->values();
+    $incomingRequests = $allTransfers->where('id_user_2', $user->id)->values();
+
+    return response()->json([
+        'message' => 'Data transfer stock ditemukan.',
+        'data' => [
+            'my_requests' => $myRequests,
+            'incoming_requests' => $incomingRequests,
+        ]
+    ]);
+}
+
+
+
 
     /**
      * Show the form for creating a new resource.
@@ -29,58 +62,105 @@ class TransferStockController extends Controller
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'id_user_2' => 'required|exists:users,id',
-            'id_unit_request' => 'required|exists:unit,id',
-            'id_unit_gives' => 'required|exists:unit,id',
-            'qty_product_request' => 'required|numeric',
-        ]);
+public function store(Request $request)
+{
+    $user = auth()->user(); // Pengaju request
 
-        // Ambil user yang diminta
-        $user2 = User::findOrFail($validated['id_user_2']);
+    $validated = $request->validate([
+        'id_branch' => 'required|exists:branch,id', // Cabang tujuan
+        'id_unit_request' => 'required|exists:unit,id',
+        'qty_product_request' => 'required|numeric|min:1',
+    ]);
 
-        // Ambil unit pengirim berdasarkan id_branch dari user2
-        $unitFrom = Unit::where('id', $validated['id_unit_gives'])
-            ->where('id_branch', $user2->id_branch)
-            ->firstOrFail();
-
-        $productPriceGives = $unitFrom->price;
-        $totalPrice = $productPriceGives * $validated['qty_product_request'];
-
-
-        // Buat data transfer stock
-        $transferStock = TransferStock::create([
-            'id_user' => auth()->id(),
-            'id_user_2' => $validated['id_user_2'],
-            'id_unit_request' => $validated['id_unit_request'],
-            'id_unit_gives' => $validated['id_unit_gives'],
-            'product_price_gives' => $productPriceGives,
-            'qty_product_request' => $validated['qty_product_request'],
-            'total_price' => $totalPrice,
-        ]);
-
-        // Buat request terkait
-        RequestModel::create([
-            'id_transfer_stock' => $transferStock->id,
-            'status' => 'pending',
-            'date' => now(),
-        ]);
-
+    // ❗ Dilarang request ke cabangnya sendiri
+    if ((int) $validated['id_branch'] === (int) $user->id_branch) {
         return response()->json([
-            'message' => 'Transfer stock berhasil dibuat.',
-            'data' => $transferStock,
-        ], 201);
+            'message' => 'Anda tidak dapat membuat permintaan ke cabang Anda sendiri.',
+        ], 403);
     }
+
+    // Ambil unit request
+    $unitRequest = Unit::findOrFail($validated['id_unit_request']);
+
+    // ❗ Validasi bahwa unit yang diminta berasal dari cabang user
+    if ((int) $unitRequest->id_branch !== (int) $user->id_branch) {
+        return response()->json([
+            'message' => 'Unit yang diminta harus berasal dari cabang Anda.',
+        ], 403);
+    }
+
+    // Cari unit dari cabang tujuan yang punya jenis produk sama
+    $unitGives = Unit::where('id_branch', $validated['id_branch'])
+        ->where('id_product_type', $unitRequest->id_product_type)
+        ->first();
+
+    if (!$unitGives) {
+        return response()->json([
+            'message' => 'Tidak ditemukan unit pemberi di cabang tujuan dengan jenis produk yang sama.',
+        ], 404);
+    }
+
+    // Cari owner dari cabang tujuan
+    $ownerTujuan = User::where('id_branch', $validated['id_branch'])
+        ->where('id_role', 2)
+        ->first();
+
+    if (!$ownerTujuan) {
+        return response()->json([
+            'message' => 'Owner cabang tujuan tidak ditemukan.',
+        ], 404);
+    }
+
+    // Simpan transfer stock
+    $transferStock = TransferStock::create([
+        'id_user' => $user->id,
+        'id_user_2' => $ownerTujuan->id,
+        'id_unit_request' => $unitRequest->id,
+        'id_unit_gives' => $unitGives->id,
+        'qty_product_request' => $validated['qty_product_request'],
+        'status' => 'pending',
+    ]);
+
+
+    return response()->json([
+        'message' => 'Transfer stock berhasil dibuat.',
+        'data' => $transferStock,
+    ], 201);
+}
+
+
+
+
 
     /**
      * Display the specified resource.
      */
-    public function show(TransferStock $transferStock)
-    {
-        //
+public function show($id)
+{
+    $user = auth()->user();
+
+    $transfer = TransferStock::with([
+        'user:id,username',
+        'user2:id,username',
+        'unit_request:id,unit_name,id_product_type',
+        'unit_request.productType:id,product_name_type',
+        'unit_gives:id,unit_name,id_product_type',
+        'unit_gives.productType:id,product_name_type',
+    ])->findOrFail($id);
+
+    // Hanya user tujuan (id_user_2) yang boleh melihat
+    if ($transfer->id_user_2 !== $user->id) {
+        return response()->json([
+            'message' => 'Anda tidak memiliki akses ke transfer stock ini.'
+        ], 403);
     }
+
+    return response()->json([
+        'message' => 'Detail transfer stock ditemukan.',
+        'data' => $transfer
+    ]);
+}
+
 
     /**
      * Show the form for editing the specified resource.
@@ -93,10 +173,42 @@ class TransferStockController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, TransferStock $transferStock)
-    {
-        //
+    public function update(Request $request, $id)
+{
+    $validated = $request->validate([
+        'status' => 'required|in:pending,success,rejected',
+    ]);
+
+    $transfer = TransferStock::with(['unit_gives', 'unit_request'])->findOrFail($id);
+
+    // Cek apakah user yang update adalah pemilik cabang tujuan
+    if ($transfer->id_user_2 !== auth()->id()) {
+        return response()->json(['message' => 'Unauthorized'], 403);
     }
+
+    // Jika status yang baru adalah 'success' dan sebelumnya bukan 'success'
+    if ($validated['status'] === 'success' && $transfer->status !== 'success') {
+        // Kurangi stok dari unit pemberi
+        $unitGives = $transfer->unit_gives;
+        $unitGives->stock -= $transfer->qty_product_request;
+        $unitGives->save();
+
+        // Tambah stok ke unit permintaan
+        $unitRequest = $transfer->unit_request;
+        $unitRequest->stock += $transfer->qty_product_request;
+        $unitRequest->save();
+    }
+
+    $transfer->update([
+        'status' => $validated['status'],
+    ]);
+
+    return response()->json([
+        'message' => 'Status transfer stock berhasil diperbarui.',
+        'data' => $transfer
+    ]);
+}
+
 
     /**
      * Remove the specified resource from storage.
@@ -114,7 +226,7 @@ class TransferStockController extends Controller
     }
 
     // Hapus request terkait
-    RequestModel::where('id_transfer_stock', $transferStock->id)->delete();
+    // RequestModel::where('id_transfer_stock', $transferStock->id)->delete();
 
     // Hapus transfer stock
     $transferStock->delete();

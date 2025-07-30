@@ -12,7 +12,10 @@ class CustomerController extends Controller
      */
     public function index()
     {
-        return Customer::all();
+        $user = auth()->user();
+
+        $customers = Customer::all();
+        return response()->json($customers);
     }
 
     /**
@@ -76,6 +79,17 @@ class CustomerController extends Controller
      */
     public function destroy($id)
     {
-        return Customer::destroy($id);
+            try {
+        $customer = Customer::findOrFail($id);
+        $customer->delete();
+
+        return response()->json(['message' => 'Customer deleted successfully.']);
+    } catch (\Exception $e) {
+        \Log::error('Delete customer error: ' . $e->getMessage()); // Tambahkan ini
+        return response()->json([
+            'error' => 'Failed to delete customer',
+            'message' => $e->getMessage()
+        ], 500);
+    }
     }
 }

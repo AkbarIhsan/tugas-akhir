@@ -12,7 +12,7 @@ class PurchaseOrderDetail extends Model
         'id_unit',
         'vendor',
         'qty',
-        'price',
+        'cost_price',
         'total_price',
     ];
 

@@ -3,6 +3,8 @@
 namespace App\Http\Controllers;
 
 use App\Models\Delivery;
+use App\Models\SalesOrder;
+
 use Illuminate\Http\Request;
 
 class DeliveryController extends Controller
@@ -10,10 +12,54 @@ class DeliveryController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index()
-    {
+public function index()
+{
+    $user = auth()->user();
 
-    }
+    $deliveries = Delivery::with(['salesOrder.users.branch', 'customer'])
+        ->whereHas('salesOrder.users', function ($query) use ($user) {
+            $query->where('id_branch', $user->id_branch);
+        })
+        ->get();
+
+    $result = $deliveries->map(function ($delivery) {
+        $salesOrder = $delivery->salesOrder;
+        $user = $salesOrder?->users;
+        $branch = $user?->branch;
+
+        return [
+            'id' => $delivery->id,
+            'id_sales_order' => $delivery->id_sales_order,
+            'id_customer' => $delivery->id_customer,
+            'date' => $delivery->date,
+            'status' => $delivery->status,
+            'created_at' => $delivery->created_at,
+            'updated_at' => $delivery->updated_at,
+            'sales_order' => [
+                'id' => $salesOrder->id ?? null,
+                'id_user' => $salesOrder->id_user ?? null,
+                'username' => $user->username ?? null,
+                'branch_name' => $branch->branch_name ?? null,
+                'date' => $salesOrder->date ?? null,
+                'status' => $salesOrder->status ?? null,
+                'created_at' => $salesOrder->created_at ?? null,
+                'updated_at' => $salesOrder->updated_at ?? null,
+            ],
+            'customer' => [
+                'id' => $delivery->customer->id ?? null,
+                'name' => $delivery->customer->name ?? null,
+                'customer_address' => $delivery->customer->customer_address ?? null,
+                'phone' => $delivery->customer->phone ?? null,
+                'created_at' => $delivery->customer->created_at ?? null,
+                'updated_at' => $delivery->customer->updated_at ?? null,
+            ]
+        ];
+    });
+
+    return response()->json($result);
+}
+
+
 
     /**
      * Show the form for creating a new resource.
@@ -73,8 +119,6 @@ public function update(Request $request, $id)
 
     // Validasi input
     $validated = $request->validate([
-        'id_sales_order' => 'required|exists:sales_order,id',
-        'id_customer' => 'required|exists:customer,id',
         'status' => 'in:pending,completed',
     ]);
 

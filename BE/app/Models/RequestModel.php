@@ -13,7 +13,7 @@ class RequestModel extends Model
         'date',
     ];
 
-    public function transferStock(){
-        return $this->belongsTo(TransferStock::class, 'id_transfer_stock');
-    }
+    // public function transferStock(){
+    //     return $this->belongsTo(TransferStock::class, 'id_transfer_stock');
+    // }
 }

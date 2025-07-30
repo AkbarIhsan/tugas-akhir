@@ -10,10 +10,23 @@ class MoneyFlowController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index()
-    {
-        //
-    }
+public function index()
+{
+    $user = auth()->user();
+
+    $moneyFlows = MoneyFlow::with(['flowType', 'users.branch'])
+        ->whereIn('id_user', function ($query) use ($user) {
+            $query->select('id')
+                ->from('users')
+                ->where('id_branch', $user->id_branch);
+        })
+        ->orderBy('date', 'desc')
+        ->get();
+
+    return response()->json($moneyFlows);
+}
+
+
 
     /**
      * Show the form for creating a new resource.

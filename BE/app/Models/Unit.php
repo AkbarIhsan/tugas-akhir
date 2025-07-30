@@ -12,6 +12,7 @@ class Unit extends Model
         'id_branch',
         'unit_name',
         'price',
+        'cost_price',
         'stock',
         'min_stock',
     ];
@@ -30,4 +31,16 @@ class Unit extends Model
     public function purchaseOrderDetail(){
         return $this->hasMany(PurchaseOrderDetail::class, 'id_unit');
     }
+
+    public function transferStockRequests()
+    {
+        return $this->hasMany(TransferStock::class, 'id_unit_request');
+    }
+
+    // Semua transfer stock yang menggunakan unit ini sebagai PENGIRIM (unit_gives)
+    public function transferStockGives()
+    {
+        return $this->hasMany(TransferStock::class, 'id_unit_gives');
+    }
 }
+

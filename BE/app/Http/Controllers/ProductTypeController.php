@@ -59,15 +59,23 @@ class ProductTypeController extends Controller
      */
     public function update(Request $request, string $id)
     {
-        $productType = ProductType::findOrFail($id);
+            $productType = ProductType::findOrFail($id);
 
-        $validated = $request->validate([
-            'id_product' => 'sometimes|exists:product,id',
-            'product_name_type' => 'sometimes|string|max:255',
-        ]);
+            $validated = $request->validate([
+                'id_product' => 'sometimes|exists:product,id',
+                'product_name_type' => 'sometimes|string|max:255',
+            ]);
 
-        $productType->update($validated);
-        return response()->json($productType);
+            if (empty($validated)) {
+                return response()->json(['message' => 'No data to update'], 422);
+            }
+
+            $productType->update($validated);
+
+            return response()->json([
+                'message' => 'Update successful',
+                'data' => $productType,
+            ]);
     }
 
     /**

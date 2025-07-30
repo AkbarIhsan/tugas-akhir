@@ -11,21 +11,32 @@ class RequestController extends Controller
     /**
      * Display a listing of the resource.
      */
-    public function index()
-    {
-        $requests = RequestModel::with([
-        'transferStock',
-        'transferStock.unit',
-        'transferStock.units',
-        'transferStock.users',     // user yang meminta
-        'transferStock.user2'     // user yang diminta
-    ])->orderBy('created_at', 'desc')->get();
+public function index()
+{
+    $user = auth()->user();
+
+    $requests = RequestModel::with([
+        'transferStock.user:id,username',
+        'transferStock.user2:id,username',
+        'transferStock.unit_request:id,unit_name,id_product_type',
+        'transferStock.unit_request.productType:id,product_name_type',
+        'transferStock.unit_gives:id,unit_name,id_product_type,stock',
+        'transferStock.unit_gives.productType:id,product_name_type',
+    ])
+    ->whereHas('transferStock', function ($query) use ($user) {
+        $query->where('id_user', $user->id)
+            ->orWhere('id_user_2', $user->id);
+    })
+    ->get();
 
     return response()->json([
-        'message' => 'Data request berhasil diambil.',
-        'data' => $requests,
+        'message' => 'Daftar request yang terkait dengan Anda.',
+        'data' => $requests
     ]);
-    }
+}
+
+
+
 
     /**
      * Show the form for creating a new resource.
@@ -46,10 +57,37 @@ class RequestController extends Controller
     /**
      * Display the specified resource.
      */
-    public function show(RequestModel $requestModel)
-    {
-        //
+public function show($id)
+{
+    $user = auth()->user();
+
+    $request = RequestModel::with([
+        'transferStock.user:id,username',
+        'transferStock.user2:id,username',
+        'transferStock.unit_request:id,unit_name,id_product_type',
+        'transferStock.unit_request.productType:id,product_name_type',
+        'transferStock.unit_gives:id,unit_name,id_product_type,stock',
+        'transferStock.unit_gives.productType:id,product_name_type',
+    ])->findOrFail($id);
+
+    // Cek apakah user adalah pengirim atau penerima
+    if (
+        $request->transferStock->id_user !== $user->id &&
+        $request->transferStock->id_user_2 !== $user->id
+    ) {
+        return response()->json([
+            'message' => 'Kamu tidak memiliki akses untuk melihat request ini.'
+        ], 403);
     }
+
+    return response()->json([
+        'message' => 'Detail request berhasil diambil.',
+        'data' => $request
+    ]);
+}
+
+
+
 
     /**
      * Show the form for editing the specified resource.
@@ -62,66 +100,62 @@ class RequestController extends Controller
     /**
      * Update the specified resource in storage.
      */
-    public function update(Request $request, $id)
-    {
-        $requestData = $request->validate([
-            'status' => 'required|in:success,rejected',
-        ]);
+public function update(Request $request, $id)
+{
+    $user = auth()->user();
 
-        $req = RequestModel::with('transferStock')->findOrFail($id);
-        $transfer = $req->transferStock;
+    $validated = $request->validate([
+        'status' => 'required|in:success,rejected',
+    ]);
 
-        // Cek apakah user login adalah penerima request
-        if (auth()->id() !== $transfer->id_user_2) {
+    $requestStock = RequestModel::with('transferStock')->findOrFail($id);
+    $transfer = $requestStock->transferStock;
+
+    // Validasi hanya user penerima (id_user_2) yang boleh update
+    if ($transfer->id_user_2 !== $user->id) {
+        return response()->json([
+            'message' => 'Kamu tidak memiliki akses untuk mengubah status request ini.'
+        ], 403);
+    }
+
+    // Jika status sudah final, tidak boleh diubah lagi
+    if (in_array($requestStock->status, ['success', 'rejected'])) {
+        return response()->json([
+            'message' => 'Status request sudah final dan tidak bisa diubah.'
+        ], 422);
+    }
+
+    // Update status dulu
+    $requestStock->update(['status' => $validated['status']]);
+
+    if ($validated['status'] === 'success') {
+        $qty = $transfer->qty_product_request;
+
+        // Ambil unit pengirim (dari transfer_stock)
+        $unitFrom = Unit::findOrFail($transfer->id_unit_gives);
+
+        if ($unitFrom->stock < $qty) {
             return response()->json([
-                'message' => 'Kamu tidak memiliki akses untuk mengubah status request ini.'
-            ], 403);
-        }
-
-        // Jika status sudah success atau rejected sebelumnya, jangan izinkan update lagi
-        if (in_array($req->status, ['success', 'rejected'])) {
-            return response()->json([
-                'message' => 'Status request sudah final dan tidak bisa diubah.'
+                'message' => 'Stok tidak mencukupi pada unit pengirim.',
             ], 422);
         }
 
-        // Update status
-        $req->update(['status' => $requestData['status']]);
+        // Kurangi stok dari pengirim
+        $unitFrom->decrement('stock', $qty);
 
-        if ($requestData['status'] === 'success') {
-            $qty = $transfer->qty_product_request;
-
-            // Ambil branch dari user pengirim & penerima
-            $branch_user_2 = \App\Models\User::findOrFail($transfer->id_user_2)->id_branch;
-            $branch_user_1 = \App\Models\User::findOrFail($transfer->id_user)->id_branch;
-
-            // Kurangi stok dari unit pengirim
-            $unitFrom = Unit::where('id', $transfer->id_unit_gives)
-                ->where('id_branch', $branch_user_2)
-                ->firstOrFail();
-
-            if ($unitFrom->stock < $qty) {
-                return response()->json([
-                    'message' => 'Stok tidak mencukupi pada unit pengirim.',
-                ], 422);
-            }
-
-            $unitFrom->decrement('stock', $qty);
-
-            // Tambahkan stok ke unit penerima
-            $unitTo = Unit::where('id', $transfer->id_unit_request)
-                ->where('id_branch', $branch_user_1)
-                ->firstOrFail();
-
-            $unitTo->increment('stock', $qty);
-        }
-
-        return response()->json([
-            'message' => 'Status berhasil diperbarui.',
-            'data' => $req->fresh('transferStock'),
-        ]);
-
+        // Tambah stok ke unit penerima
+        $unitTo = Unit::findOrFail($transfer->id_unit_request);
+        $unitTo->increment('stock', $qty);
     }
+
+    return response()->json([
+        'message' => 'Status berhasil diperbarui.',
+        'data' => $requestStock->fresh('transferStock'),
+    ]);
+}
+
+
+
 
     /**
      * Remove the specified resource from storage.

@@ -14,14 +14,15 @@ class PurchaseOrderDetailController extends Controller
      */
     public function index()
     {
-        $details = PurchaseOrderDetail::with('purchaseOrder', 'unit')->get();
+        $details = PurchaseOrderDetail::with('purchaseOrder', 'unit')->latest()->get();
 
         return response()->json($details->map(function ($details) {
             return [
                 'id' => $details->id,
                 'vendor' => $details->vendor,
-                'price' => $details->price,
+                'cost_price' => $details->cost_price,
                 'qty' => $details->qty,
+                'created_at' => $details->created_at,
                 'total_price' => $details->total_price,
                 'username' => $details->purchaseOrder->users->username ?? null,
                 'branch' => $details->purchaseOrder->users->branch->branch_name ?? null,
@@ -42,38 +43,55 @@ class PurchaseOrderDetailController extends Controller
     /**
      * Store a newly created resource in storage.
      */
-    public function store(Request $request)
-    {
-        $validated = $request->validate([
-            'id_unit' => 'required|exists:unit,id',
-            'vendor' => 'required|string|max:255',
-            'qty' => 'required|integer|min:1',
-            'price' => 'required|numeric|min:0',
-        ]);
+public function store(Request $request)
+{
+    $user = auth()->user();
 
-        // Buat purchase_order terlebih dahulu
-        $purchaseOrder = PurchaseOrder::create([
-            'id_user' => auth()->id(),
-            'date' => now(),
-        ]);
-
-        // Tambahkan id_purchase_order yang baru saja dibuat ke validated data
-        $validated['id_purchase_order'] = $purchaseOrder->id;
-
-        // Hitung total harga
-        $validated['total_price'] = $validated['qty'] * $validated['price'];
-
-        // Cari unit dan update stock dan price
-        $unit = Unit::findOrFail($validated['id_unit']);
-        $unit->increment('stock', $validated['qty']);
-        $unit->price = $validated['price'];
-        $unit->save();
-
-        // Simpan detail purchase order
-        $detail = PurchaseOrderDetail::create($validated);
-
-        return response()->json($detail, 201);
+    if (!$user) {
+        return response()->json(['message' => 'Unauthenticated'], 401);
     }
+
+    $validated = $request->validate([
+        'id_unit' => 'required|exists:unit,id',
+        'qty' => 'required|integer|min:1',
+        'vendor' => 'required|string|max:255',
+        'cost_price' => 'required|numeric|min:0',
+    ]);
+
+    $unit = Unit::findOrFail($validated['id_unit']);
+
+    // Cari transaksi aktif (pending) dari user
+    $purchaseOrder = PurchaseOrder::where('id_user', $user->id)
+        ->where('status', 'pending')
+        ->latest()
+        ->first();
+
+    // Jika tidak ada, buat transaksi baru
+    if (!$purchaseOrder) {
+        $purchaseOrder = PurchaseOrder::create([
+            'id_user' => $user->id,
+            'date' => now(),
+            'status' => 'pending',
+        ]);
+    }
+
+    // Tambahkan id_purchase_order ke validated data
+    $validated['id_purchase_order'] = $purchaseOrder->id;
+
+    // Hitung total harga
+    $validated['total_price'] = $validated['qty'] * $validated['cost_price'];
+
+    // Tambahkan detail ke purchase_order
+    $detail = PurchaseOrderDetail::create($validated);
+
+    // Tambahkan stok unit dan perbarui cost_price
+    $unit->increment('stock', $validated['qty']);
+    $unit->cost_price = $validated['cost_price'];
+    $unit->save();
+
+    return response()->json($detail, 201);
+}
+
 
     /**
      * Display the specified resource.
@@ -95,7 +113,7 @@ class PurchaseOrderDetailController extends Controller
             ],
             'vendor' => $detail->vendor,
             'qty' => $detail->qty,
-            'price' => $detail->price,
+            'cost_price' => $detail->cost_price,
             'total_price' => $detail->total_price,
         ]);
     }
